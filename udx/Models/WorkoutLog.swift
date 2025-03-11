@@ -8,7 +8,7 @@ final class WorkoutLog {
     var reps: Int
     var weight: Double
     var notes: String?
-    @Relationship(inverse: \PlanExercise.logs) var planExercise: PlanExercise?
+    @Relationship(inverse: \PlannedExercise.logs) var planExercise: PlannedExercise?
     
     init(date: Date, sets: Int, reps: Int, weight: Double, notes: String? = nil) {
         self.date = date

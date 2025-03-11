@@ -17,7 +17,10 @@ class SwiftDataManager {
             Exercise.self,
             ExerciseLog.self,
             MajorMuscle.self,
-            MinorMuscle.self
+            MinorMuscle.self,
+            WorkoutPlan.self,
+            PlannedExercise.self,  // Make sure it's PlannedExercise, not PlanExercise
+            WorkoutSet.self
         ])
         
         let modelConfiguration = ModelConfiguration(

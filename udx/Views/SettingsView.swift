@@ -79,7 +79,7 @@ struct SettingsView: View {
                 TextField("Major Muscle Name", text: $newMajorMuscleName)
                 
                 Button("Save") {
-                    if !newMajorMuscleName.isEmpty {
+                    if (!newMajorMuscleName.isEmpty) {
                         let muscle = MajorMuscle(name: newMajorMuscleName)
                         modelContext.insert(muscle)
                         newMajorMuscleName = ""
@@ -110,11 +110,11 @@ struct SettingsView: View {
                 TextField("Minor Muscle Name", text: $newMinorMuscleName)
                 
                 Button("Save") {
-                    if !newMinorMuscleName.isEmpty, let majorMuscle = selectedMajorMuscle {
+                    if (!newMinorMuscleName.isEmpty), let majorMuscle = selectedMajorMuscle {
                         let minorMuscle = MinorMuscle(name: newMinorMuscleName, majorMuscle: majorMuscle)
                         modelContext.insert(minorMuscle)
                         
-                        if majorMuscle.minorMuscles == nil {
+                        if (majorMuscle.minorMuscles == nil) {
                             majorMuscle.minorMuscles = [minorMuscle]
                         } else {
                             majorMuscle.minorMuscles?.append(minorMuscle)
@@ -143,26 +143,96 @@ struct SettingsView: View {
     }
     
     private func deleteMajorMuscles(at offsets: IndexSet) {
-        for index in offsets {
-            let muscle = majorMuscles[index]
-            modelContext.delete(muscle)
-        }
+        // Save IDs before modifying the array
+        let muscleIDs = offsets.map { majorMuscles[$0].id }
         
-        // Explicitly save changes
-        try? modelContext.save()
-        SwiftDataManager.shared.saveContext()
+        // Wait until the next run loop
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            Task {
+                await DeleteHelper.deleteMajorMuscles(withIDs: muscleIDs, using: self.modelContext)
+            }
+        }
     }
     
     private func deleteMinorMuscles(indices: IndexSet, from majorMuscle: MajorMuscle) {
-        guard var minorMuscles = majorMuscle.minorMuscles else { return }
+        // Safe copy of minor muscles
+        guard let minorMuscles = majorMuscle.minorMuscles else { return }
         
-        for index in indices {
-            let muscle = minorMuscles[index]
-            modelContext.delete(muscle)
+        // Save IDs before modifying
+        let muscleIDs = indices.map { minorMuscles[$0].id }
+        let majorMuscleID = majorMuscle.id
+        
+        // Wait until the next run loop
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            Task {
+                await DeleteHelper.deleteMinorMuscles(withIDs: muscleIDs, fromMajorMuscleID: majorMuscleID, using: self.modelContext)
+            }
         }
-        
-        // Explicitly save changes
-        try? modelContext.save()
-        SwiftDataManager.shared.saveContext()
+    }
+}
+
+// Add to the DeleteHelper actor
+actor DeleteHelper {
+    static func deleteMajorMuscles(withIDs ids: [PersistentIdentifier], using context: ModelContext) {
+        do {
+            for id in ids {
+                // Find the major muscle by ID
+                let descriptor = FetchDescriptor<MajorMuscle>(predicate: #Predicate { $0.id == id })
+                guard let majorMuscle = try context.fetch(descriptor).first else { continue }
+                
+                // Clear relations before deleting
+                let minorMuscles = majorMuscle.minorMuscles ?? []
+                majorMuscle.minorMuscles = nil
+                majorMuscle.exercises = nil
+                
+                try context.save()
+                
+                // Delete minor muscles
+                for minorMuscle in minorMuscles {
+                    minorMuscle.exercises = nil
+                    minorMuscle.majorMuscle = nil
+                    context.delete(minorMuscle)
+                }
+                
+                try context.save()
+                
+                // Delete the major muscle
+                context.delete(majorMuscle)
+                try context.save()
+            }
+        } catch {
+            print("Error deleting major muscles: \(error)")
+        }
+    }
+    
+    static func deleteMinorMuscles(withIDs ids: [PersistentIdentifier], fromMajorMuscleID majorID: PersistentIdentifier, using context: ModelContext) {
+        do {
+            // Find the major muscle
+            let majorDescriptor = FetchDescriptor<MajorMuscle>(predicate: #Predicate { $0.id == majorID })
+            guard let majorMuscle = try context.fetch(majorDescriptor).first else { return }
+            
+            // Process each minor muscle
+            for id in ids {
+                let descriptor = FetchDescriptor<MinorMuscle>(predicate: #Predicate { $0.id == id })
+                guard let minorMuscle = try context.fetch(descriptor).first else { continue }
+                
+                // Update the major muscle's minorMuscles array
+                if var minorMuscles = majorMuscle.minorMuscles {
+                    majorMuscle.minorMuscles = minorMuscles.filter { $0.id != minorMuscle.id }
+                }
+                
+                // Clear relationships
+                minorMuscle.exercises = nil
+                minorMuscle.majorMuscle = nil
+                
+                try context.save()
+                
+                // Delete the minor muscle
+                context.delete(minorMuscle)
+                try context.save()
+            }
+        } catch {
+            print("Error deleting minor muscles: \(error)")
+        }
     }
 }

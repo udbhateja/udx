@@ -20,7 +20,8 @@ struct ContentView: View {
                     Label("Exercises", systemImage: "dumbbell")
                 }
             
-            Text("Workout Plan View") // Replace with PlansView when it's ready
+            // Use regular path instead of Views.WorkoutPlan.PlansView() which might be causing the issue
+            PlansView()
                 .tabItem {
                     Label("Plans", systemImage: "list.bullet.clipboard")
                 }
