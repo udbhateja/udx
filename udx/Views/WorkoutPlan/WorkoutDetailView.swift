@@ -193,11 +193,15 @@ struct WorkoutDetailView: View {
                     Text("Last: \(lastWorkout.sets) × \(lastWorkout.reps) @ \(String(format: "%.1f", lastWorkout.weight))kg")
                         .font(.caption)
                         .foregroundColor(.secondary)
+                    
+                    Text("Target: \(plannedExercise.targetSets) × \(plannedExercise.targetReps) @ \(String(format: "%.1f", plannedExercise.suggestedWeight))kg")
+                        .font(.caption)
+                        .foregroundColor(.blue)
+                } else {
+                    Text("Target: \(plannedExercise.targetSets) × \(plannedExercise.targetReps)")
+                        .font(.caption)
+                        .foregroundColor(.blue)
                 }
-                
-                Text("Target: \(plannedExercise.targetSets) × \(plannedExercise.targetReps) @ \(String(format: "%.1f", plannedExercise.suggestedWeight))kg")
-                    .font(.caption)
-                    .foregroundColor(.blue)
             }
             
             Spacer()

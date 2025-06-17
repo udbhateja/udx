@@ -8,6 +8,7 @@ struct ExerciseDetailView: View {
     
     @State private var exercise: Exercise
     @State private var isEditing = false
+    @State private var showingLogView = false
     
     // For editing
     @State private var editedName: String
@@ -74,6 +75,15 @@ struct ExerciseDetailView: View {
                 
                 Divider()
                 
+                // Log button
+                Button("Log Workout") {
+                    showingLogView = true
+                }
+                .buttonStyle(.borderedProminent)
+                .frame(maxWidth: .infinity)
+                
+                Divider()
+                
                 exerciseHistorySection
             }
             .padding()
@@ -124,6 +134,9 @@ struct ExerciseDetailView: View {
                     editedImageData = data
                 }
             }
+        }
+        .sheet(isPresented: $showingLogView) {
+            ExerciseLogView(exercise: exercise)
         }
     }
     

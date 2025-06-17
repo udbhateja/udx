@@ -80,7 +80,7 @@ final class PlannedExercise {
     // Helper for progressive overload
     var suggestedWeight: Double {
         guard let lastLog = lastWorkout else {
-            return targetWeight ?? 0
+            return 0 // Return 0 if no previous workout data
         }
         
         // Simple progressive overload: 5% increase if completed all reps last time

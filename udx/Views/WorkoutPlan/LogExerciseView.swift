@@ -109,8 +109,8 @@ struct LogExerciseView: View {
                 Divider()
                 Label("\(plannedExercise.targetReps) reps", systemImage: "repeat")
                 Divider()
-                if let targetWeight = plannedExercise.targetWeight {
-                    Label("\(String(format: "%.1f", targetWeight))kg", systemImage: "scalemass")
+                if let lastWorkout = plannedExercise.lastWorkout {
+                Label("\(String(format: "%.1f", plannedExercise.suggestedWeight))kg", systemImage: "scalemass")
                 }
             }
             .font(.caption)
@@ -133,8 +133,12 @@ struct LogExerciseView: View {
             // Start with target values
             reps = plannedExercise.targetReps
             
-            // Use suggested weight from progressive overload calculation
-            weight = plannedExercise.suggestedWeight
+            // Use suggested weight only if there's previous workout data
+            if let lastWorkout = plannedExercise.lastWorkout {
+                weight = plannedExercise.suggestedWeight
+            } else {
+                weight = 0.0 // User needs to input weight manually
+            }
         }
     }
     

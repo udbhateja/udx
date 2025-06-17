@@ -172,7 +172,7 @@ struct SettingsView: View {
 }
 
 // Add to the DeleteHelper actor
-actor DeleteHelper {
+class DeleteHelper {
     static func deleteMajorMuscles(withIDs ids: [PersistentIdentifier], using context: ModelContext) {
         do {
             for id in ids {
