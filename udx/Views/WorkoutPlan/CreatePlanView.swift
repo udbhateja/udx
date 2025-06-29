@@ -4,19 +4,23 @@ import SwiftData
 struct CreatePlanView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
-    @Query private var majorMuscles: [MajorMuscle]
+    @Query private var exercises: [Exercise]
     
     @State private var planName = "Workout"
     @State private var planDate = Date()
     @State private var planNotes = ""
-    @State private var selectedMuscles = Set<MajorMuscle>()
     @State private var useAI = false
     @State private var generatingWithAI = false
     @State private var showingExerciseSelection = false
     @State private var createdPlan: WorkoutPlan?
+    @State private var geminiAPIKey = ""
+    
+    // Edit mode support
+    var existingPlan: WorkoutPlan? = nil
+    var isEditMode: Bool { existingPlan != nil }
     
     var formIsValid: Bool {
-        !planName.isEmpty && !selectedMuscles.isEmpty
+        !planName.isEmpty
     }
     
     var body: some View {
@@ -29,42 +33,20 @@ struct CreatePlanView: View {
                         .frame(height: 100)
                 }
                 
-                Section("Target Muscles") {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack {
-                            ForEach(majorMuscles) { muscle in
-                                Toggle(muscle.name, isOn: Binding(
-                                    get: { selectedMuscles.contains(muscle) },
-                                    set: { isSelected in
-                                        if isSelected {
-                                            selectedMuscles.insert(muscle)
-                                        } else {
-                                            selectedMuscles.remove(muscle)
-                                        }
-                                    }
-                                ))
-                                .toggleStyle(.button)
-                                .buttonStyle(.bordered)
-                                .tint(selectedMuscles.contains(muscle) ? .blue : .gray)
-                            }
+                if !isEditMode {
+                    Section {
+                        Toggle("Generate with AI", isOn: $useAI)
+                        
+                        if useAI {
+                            SecureField("Gemini API Key", text: $geminiAPIKey)
+                                .textContentType(.password)
                         }
-                        .padding(.vertical, 8)
+                    } footer: {
+                        Text("AI will generate a complete workout plan based on your exercise history and progressive overload principles")
                     }
                 }
-                
-                Section {
-                    Toggle("Generate with AI", isOn: $useAI)
-                        .onChange(of: useAI) { _, newValue in
-                            if newValue {
-                                // Reset selected muscles if using AI
-                                selectedMuscles = Set(majorMuscles.prefix(3))
-                            }
-                        }
-                } footer: {
-                    Text("AI will generate a workout plan targeting the selected muscle groups")
-                }
             }
-            .navigationTitle("Create Workout")
+            .navigationTitle(isEditMode ? "Edit Workout" : "Create Workout")
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") {
@@ -73,15 +55,22 @@ struct CreatePlanView: View {
                 }
                 
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Next") {
-                        createWorkoutPlan()
+                    Button(isEditMode ? "Save" : "Next") {
+                        if isEditMode {
+                            updateWorkoutPlan()
+                        } else {
+                            createWorkoutPlan()
+                        }
                     }
-                    .disabled(!formIsValid)
+                    .disabled(!formIsValid || (useAI && geminiAPIKey.isEmpty))
                 }
             }
             .sheet(isPresented: $showingExerciseSelection) {
                 if let plan = createdPlan {
-                    SelectExercisesView(plan: plan)
+                    SelectExercisesView(plan: plan) {
+                        // Dismiss both sheets when exercises are saved
+                        dismiss()
+                    }
                 }
             }
             .overlay {
@@ -93,12 +82,15 @@ struct CreatePlanView: View {
                         .shadow(radius: 10)
                 }
             }
+            .onAppear {
+                setupForEditing()
+                loadGeminiAPIKey()
+            }
         }
     }
     
     private func createWorkoutPlan() {
         let plan = WorkoutPlan(date: planDate, name: planName, notes: planNotes)
-        plan.targetMuscles = Array(selectedMuscles)
         modelContext.insert(plan)
         
         if useAI {
@@ -116,6 +108,11 @@ struct CreatePlanView: View {
     private func generateWithAI(plan: WorkoutPlan) {
         generatingWithAI = true
         
+        // Save API key if provided
+        if !geminiAPIKey.isEmpty {
+            UserDefaults.standard.set(geminiAPIKey, forKey: "GeminiAPIKey")
+        }
+        
         // In a real app, this would call the Gemini API
         // For now, we'll simulate it with a delay and template data
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
@@ -126,36 +123,66 @@ struct CreatePlanView: View {
     }
     
     private func simulateAIWorkoutGeneration(for plan: WorkoutPlan) {
-        // Get exercises for each selected muscle
-        var exercises: [Exercise] = []
+        // Simulate AI generation by creating a balanced workout
+        // In production, this would analyze exercise history and apply progressive overload
         
-        for muscle in selectedMuscles {
-            if let muscleExercises = muscle.exercises {
-                // Take up to 2 exercises per muscle
-                let muscleSelection = Array(muscleExercises.prefix(2))
-                exercises.append(contentsOf: muscleSelection)
+        var plannedExercises: [PlannedExercise] = []
+        
+        // Group exercises by major muscle
+        var exercisesByMuscle: [String: [Exercise]] = [:]
+        for exercise in exercises {
+            let muscleGroup = exercise.allMajorMuscleNames
+            if exercisesByMuscle[muscleGroup] == nil {
+                exercisesByMuscle[muscleGroup] = []
+            }
+            exercisesByMuscle[muscleGroup]?.append(exercise)
+        }
+        
+        // Select 4-6 exercises for a balanced workout
+        let targetExerciseCount = Int.random(in: 4...6)
+        var selectedExercises: [Exercise] = []
+        
+        // Try to get variety from different muscle groups
+        for (_, muscleExercises) in exercisesByMuscle.prefix(targetExerciseCount) {
+            if let randomExercise = muscleExercises.randomElement() {
+                selectedExercises.append(randomExercise)
             }
         }
         
-        // If we have no exercises, nothing to do
-        guard !exercises.isEmpty else {
-            return
-        }
-        
-        // Create planned exercises
-        var plannedExercises: [PlannedExercise] = []
-        
-        for (index, exercise) in exercises.enumerated() {
+        // Create planned exercises with progressive overload
+        for (index, exercise) in selectedExercises.enumerated() {
             let plannedExercise = PlannedExercise(
                 exercise: exercise,
-                order: index,
-                targetSets: Int.random(in: 3...4),
-                targetReps: Int.random(in: 8...12)
+                order: index
             )
             
-            // Set suggested weight based on last workout
-            if let lastWorkout = exercise.workoutHistory?.sorted(by: { $0.date > $1.date }).first {
-                plannedExercise.targetWeight = lastWorkout.weight * 1.05
+            // Set targets based on exercise type
+            switch exercise.exerciseType {
+            case .weight:
+                plannedExercise.targetSets = Int.random(in: 3...4)
+                plannedExercise.targetReps = Int.random(in: 8...12)
+                
+                // Progressive overload from last workout
+                if let lastWorkout = exercise.workoutHistory?.sorted(by: { $0.date > $1.date }).first {
+                    plannedExercise.targetWeight = lastWorkout.weight * 1.05 // 5% increase
+                }
+                
+            case .cardio:
+                plannedExercise.targetSets = 1
+                if exercise.cardioMetric == .time || exercise.cardioMetric == .both {
+                    plannedExercise.targetDuration = TimeInterval(Int.random(in: 20...40) * 60) // 20-40 minutes
+                }
+                if exercise.cardioMetric == .distance || exercise.cardioMetric == .both {
+                    plannedExercise.targetDistance = Double.random(in: 3...10) // 3-10 km
+                }
+                
+            case .bodyweight:
+                plannedExercise.targetSets = Int.random(in: 3...4)
+                plannedExercise.targetReps = Int.random(in: 10...20)
+                
+            case .flexibility:
+                plannedExercise.targetSets = 1
+                plannedExercise.targetDuration = TimeInterval(Int.random(in: 5...10) * 60) // 5-10 minutes
             }
             
             plannedExercises.append(plannedExercise)
@@ -167,5 +194,30 @@ struct CreatePlanView: View {
         // Save immediately
         try? modelContext.save()
         SwiftDataManager.shared.saveContext()
+    }
+    
+    private func setupForEditing() {
+        guard let plan = existingPlan else { return }
+        
+        planName = plan.name
+        planDate = plan.date
+        planNotes = plan.notes ?? ""
+    }
+    
+    private func updateWorkoutPlan() {
+        guard let plan = existingPlan else { return }
+        
+        plan.name = planName
+        plan.date = planDate
+        plan.notes = planNotes.isEmpty ? nil : planNotes
+        
+        try? modelContext.save()
+        SwiftDataManager.shared.saveContext()
+        
+        dismiss()
+    }
+    
+    private func loadGeminiAPIKey() {
+        geminiAPIKey = UserDefaults.standard.string(forKey: "GeminiAPIKey") ?? ""
     }
 }

@@ -60,10 +60,13 @@ struct PlansView: View {
                     description: Text("Tap the + button to create a new workout plan")
                 )
             } else {
-                // Today's workout
-                if let todayPlan = workoutPlans.first(where: { Calendar.current.isDateInToday($0.date) }) {
-                    Section("Today's Workout") {
-                        planRow(for: todayPlan)
+                // Today's workouts
+                let todayPlans = workoutPlans.filter { Calendar.current.isDateInToday($0.date) }
+                if !todayPlans.isEmpty {
+                    Section(todayPlans.count == 1 ? "Today's Workout" : "Today's Workouts") {
+                        ForEach(todayPlans) { plan in
+                            planRow(for: plan)
+                        }
                     }
                 }
                 

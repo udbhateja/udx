@@ -7,12 +7,13 @@ struct WorkoutDetailView: View {
     @Environment(\.presentationMode) private var presentationMode
     @Bindable var plan: WorkoutPlan
     
-    @State private var showingExerciseLog = false
     @State private var selectedExercise: PlannedExercise?
     @State private var showingEditMode = false
     @State private var showingExerciseSelection = false
     @State private var showingDeleteConfirmation = false
     @State private var showingEditWorkoutSheet = false
+    @State private var exerciseToEdit: PlannedExercise?
+
     
     // For editing workout details
     @State private var editedName: String = ""
@@ -74,6 +75,7 @@ struct WorkoutDetailView: View {
                         prepareForEditing()
                         showingEditWorkoutSheet = true
                     }
+
                     
                     Button("Delete Workout", role: .destructive) {
                         showingDeleteConfirmation = true
@@ -83,10 +85,8 @@ struct WorkoutDetailView: View {
                 }
             }
         }
-        .sheet(isPresented: $showingExerciseLog) {
-            if let exercise = selectedExercise {
-                LogExerciseView(plannedExercise: exercise)
-            }
+        .sheet(item: $selectedExercise) { exercise in
+            LogExerciseView(plannedExercise: exercise)
         }
         .sheet(isPresented: $showingExerciseSelection) {
             SelectExercisesView(plan: plan)
@@ -94,6 +94,10 @@ struct WorkoutDetailView: View {
         .sheet(isPresented: $showingEditWorkoutSheet) {
             editWorkoutView
         }
+        .sheet(item: $exerciseToEdit) { exercise in
+            EditPlannedExerciseView(plannedExercise: exercise)
+        }
+
         .confirmationDialog(
             "Delete Workout",
             isPresented: $showingDeleteConfirmation,
@@ -130,15 +134,17 @@ struct WorkoutDetailView: View {
                     .padding(.vertical, 4)
             }
             
-            if let muscles = plan.targetMuscles, !muscles.isEmpty {
+            // Display muscle groups derived from exercises
+            let muscleGroups = getMuscleGroupsFromExercises()
+            if !muscleGroups.isEmpty {
                 Text("Target Muscles:")
                     .font(.subheadline)
                     .fontWeight(.semibold)
                 
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack {
-                        ForEach(muscles) { muscle in
-                            Text(muscle.name)
+                        ForEach(muscleGroups.sorted(), id: \.self) { muscle in
+                            Text(muscle)
                                 .font(.caption)
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 6)
@@ -172,8 +178,11 @@ struct WorkoutDetailView: View {
                     .shadow(color: .gray.opacity(0.2), radius: 3)
                     .padding(.horizontal)
                     .onTapGesture {
-                        selectedExercise = exercise
-                        showingExerciseLog = true
+                        if showingEditMode {
+                            exerciseToEdit = exercise
+                        } else {
+                            selectedExercise = exercise
+                        }
                     }
             }
         }
@@ -189,16 +198,15 @@ struct WorkoutDetailView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
                 
-                if let lastWorkout = plannedExercise.lastWorkout {
-                    Text("Last: \(lastWorkout.sets) × \(lastWorkout.reps) @ \(String(format: "%.1f", lastWorkout.weight))kg")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                // Display based on exercise type
+                VStack(alignment: .leading, spacing: 2) {
+                    if let lastWorkout = plannedExercise.lastWorkout {
+                        Text(formatLastWorkout(lastWorkout, for: plannedExercise.exercise))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
                     
-                    Text("Target: \(plannedExercise.targetSets) × \(plannedExercise.targetReps) @ \(String(format: "%.1f", plannedExercise.suggestedWeight))kg")
-                        .font(.caption)
-                        .foregroundColor(.blue)
-                } else {
-                    Text("Target: \(plannedExercise.targetSets) × \(plannedExercise.targetReps)")
+                    Text(formatTargetDisplay(plannedExercise))
                         .font(.caption)
                         .foregroundColor(.blue)
                 }
@@ -206,7 +214,17 @@ struct WorkoutDetailView: View {
             
             Spacer()
             
-            statusView(for: plannedExercise)
+            if showingEditMode {
+                VStack(alignment: .trailing, spacing: 4) {
+                    Text("\(plannedExercise.targetSets) sets")
+                        .font(.caption)
+                        .foregroundColor(.blue)
+                    Image(systemName: "pencil.circle")
+                        .foregroundColor(.blue)
+                }
+            } else {
+                statusView(for: plannedExercise)
+            }
         }
     }
     
@@ -289,5 +307,90 @@ struct WorkoutDetailView: View {
         }
         
         self.modelContext.delete(plan)
+    }
+    
+    private func formatLastWorkout(_ log: ExerciseLog, for exercise: Exercise) -> String {
+        switch exercise.exerciseType {
+        case .weight:
+            return "Last: \(log.sets) × \(log.reps) @ \(String(format: "%.1f", log.weight))kg"
+        case .cardio:
+            var parts: [String] = ["Last:"]
+            if let duration = log.duration {
+                let minutes = Int(duration) / 60
+                let seconds = Int(duration) % 60
+                parts.append(String(format: "%d:%02d", minutes, seconds))
+            }
+            if let distance = log.distance {
+                parts.append("\(String(format: "%.2f", distance)) \(log.distanceUnit)")
+            }
+            return parts.joined(separator: " ")
+        case .bodyweight:
+            if log.weight > 0 {
+                return "Last: \(log.sets) × \(log.reps) (+\(String(format: "%.1f", log.weight))kg)"
+            } else {
+                return "Last: \(log.sets) × \(log.reps)"
+            }
+        case .flexibility:
+            if let duration = log.duration {
+                let minutes = Int(duration) / 60
+                let seconds = Int(duration) % 60
+                return "Last: " + String(format: "%d:%02d", minutes, seconds)
+            }
+            return "Last: Completed"
+        }
+    }
+    
+    private func formatTargetDisplay(_ exercise: PlannedExercise) -> String {
+        switch exercise.exercise.exerciseType {
+        case .weight:
+            var target = "Target: \(exercise.targetSets) × \(exercise.targetReps)"
+            if exercise.lastWorkout != nil {
+                target += " @ \(String(format: "%.1f", exercise.suggestedWeight))kg"
+            }
+            return target
+        case .cardio:
+            var parts: [String] = ["Target:"]
+            if let duration = exercise.targetDuration {
+                let minutes = Int(duration) / 60
+                let seconds = Int(duration) % 60
+                parts.append(String(format: "%d:%02d", minutes, seconds))
+            }
+            if let distance = exercise.targetDistance {
+                parts.append("\(String(format: "%.2f", distance)) \(exercise.distanceUnit)")
+            }
+            return parts.joined(separator: " ")
+        case .bodyweight:
+            var target = "Target: \(exercise.targetSets) × \(exercise.targetReps)"
+            if exercise.exercise.supportsWeight && (exercise.targetWeight ?? 0) > 0 {
+                target += " (+\(String(format: "%.1f", exercise.targetWeight!))kg)"
+            }
+            return target
+        case .flexibility:
+            if let duration = exercise.targetDuration {
+                let minutes = Int(duration) / 60
+                let seconds = Int(duration) % 60
+                return "Target: " + String(format: "%d:%02d", minutes, seconds)
+            }
+            return "Target: Not set"
+        }
+    }
+    
+    private func getMuscleGroupsFromExercises() -> Set<String> {
+        var muscleGroups = Set<String>()
+        
+        if let exercises = plan.exercises {
+            for plannedExercise in exercises {
+                if let majorMuscles = plannedExercise.exercise.majorMuscles {
+                    for muscle in majorMuscles {
+                        muscleGroups.insert(muscle.name)
+                    }
+                } else {
+                    // Fallback to legacy string property
+                    muscleGroups.insert(plannedExercise.exercise.muscleGroup)
+                }
+            }
+        }
+        
+        return muscleGroups
     }
 }

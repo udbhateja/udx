@@ -18,6 +18,10 @@ struct AddExerciseView: View {
     @State private var selectedMinorMuscles: Set<MinorMuscle> = []
     @State private var availableMinorMuscles: [MinorMuscle] = []
     
+    @State private var exerciseType: ExerciseType = .weight
+    @State private var cardioMetric: CardioMetric = .time
+    @State private var supportsWeight: Bool = true
+    
     var formIsValid: Bool {
         !name.isEmpty && !selectedMajorMuscles.isEmpty
     }
@@ -27,6 +31,27 @@ struct AddExerciseView: View {
             Form {
                 Section("Exercise Information") {
                     TextField("Exercise Name", text: $name)
+                    
+                    Picker("Exercise Type", selection: $exerciseType) {
+                        ForEach(ExerciseType.allCases, id: \.self) { type in
+                            Text(type.rawValue).tag(type)
+                        }
+                    }
+                    .onChange(of: exerciseType) { _, newValue in
+                        updateExerciseTypeSettings(newValue)
+                    }
+                    
+                    if exerciseType == .cardio {
+                        Picker("Metric Type", selection: $cardioMetric) {
+                            ForEach(CardioMetric.allCases, id: \.self) { metric in
+                                Text(metric.rawValue).tag(metric)
+                            }
+                        }
+                    }
+                    
+                    if exerciseType == .bodyweight {
+                        Toggle("Can Add Weight", isOn: $supportsWeight)
+                    }
                     
                     VStack(alignment: .leading) {
                         Text("Major Muscle Groups")
@@ -157,6 +182,19 @@ struct AddExerciseView: View {
         }
     }
     
+    private func updateExerciseTypeSettings(_ type: ExerciseType) {
+        switch type {
+        case .weight:
+            supportsWeight = true
+        case .cardio:
+            supportsWeight = false
+        case .bodyweight:
+            supportsWeight = true
+        case .flexibility:
+            supportsWeight = false
+        }
+    }
+    
     private func saveExercise() {
         guard !selectedMajorMuscles.isEmpty else { return }
         
@@ -168,8 +206,18 @@ struct AddExerciseView: View {
             name: name,
             details: details,
             muscleGroup: primaryMajorMuscle.name,
-            minorMuscle: primaryMinorMuscle?.name ?? ""
+            minorMuscle: primaryMinorMuscle?.name ?? "",
+            exerciseType: exerciseType
         )
+        
+        // Set exercise type specific properties
+        exercise.exerciseType = exerciseType
+        if exerciseType == .cardio {
+            exercise.cardioMetric = cardioMetric
+        }
+        if exerciseType == .bodyweight {
+            exercise.supportsWeight = supportsWeight
+        }
         
         // Set additional properties
         exercise.imageData = selectedImageData

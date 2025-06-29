@@ -7,29 +7,74 @@ struct SelectExercisesView: View {
     
     @Bindable var plan: WorkoutPlan
     @Query private var allExercises: [Exercise]
+    @Query private var majorMuscles: [MajorMuscle]
     
     @State private var selectedExercises = Set<Exercise>()
     @State private var searchText = ""
+    @State private var selectedMuscleFilter: MajorMuscle? = nil
+    
+    var onSave: (() -> Void)? = nil
     
     var body: some View {
         NavigationStack {
             VStack {
-                if let targetMuscles = plan.targetMuscles, !targetMuscles.isEmpty {
-                    targetMusclesView(muscles: targetMuscles)
+                // Muscle filter chips
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack {
+                        Button(action: { selectedMuscleFilter = nil }) {
+                            Text("All")
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(selectedMuscleFilter == nil ? Color.blue : Color.gray.opacity(0.2))
+                                .foregroundColor(selectedMuscleFilter == nil ? .white : .primary)
+                                .cornerRadius(20)
+                        }
+                        
+                        ForEach(majorMuscles) { muscle in
+                            Button(action: { selectedMuscleFilter = muscle }) {
+                                Text(muscle.name)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 6)
+                                    .background(selectedMuscleFilter?.id == muscle.id ? Color.blue : Color.gray.opacity(0.2))
+                                    .foregroundColor(selectedMuscleFilter?.id == muscle.id ? .white : .primary)
+                                    .cornerRadius(20)
+                            }
+                        }
+                    }
+                    .padding(.horizontal)
                 }
+                .padding(.top, 8)
                 
                 List {
-                    Section("Selected Exercises (\(selectedExercises.count))") {
-                        ForEach(Array(selectedExercises), id: \.id) { exercise in
-                            HStack {
-                                Text(exercise.name)
-                                Spacer()
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundColor(.blue)
-                            }
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                selectedExercises.remove(exercise)
+                    if !selectedExercises.isEmpty {
+                        Section("Selected Exercises (\(selectedExercises.count))") {
+                            ForEach(Array(selectedExercises).sorted(by: { $0.name < $1.name }), id: \.id) { exercise in
+                                HStack {
+                                    VStack(alignment: .leading) {
+                                        Text(exercise.name)
+                                            .font(.headline)
+                                        HStack {
+                                            Text(exercise.exerciseType.rawValue)
+                                                .font(.caption)
+                                                .padding(.horizontal, 6)
+                                                .padding(.vertical, 2)
+                                                .background(backgroundForType(exercise.exerciseType))
+                                                .foregroundColor(.white)
+                                                .cornerRadius(8)
+                                            
+                                            Text(exercise.allMajorMuscleNames)
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                        }
+                                    }
+                                    Spacer()
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundColor(.blue)
+                                }
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    selectedExercises.remove(exercise)
+                                }
                             }
                         }
                     }
@@ -40,9 +85,19 @@ struct SelectExercisesView: View {
                                 VStack(alignment: .leading) {
                                     Text(exercise.name)
                                         .font(.headline)
-                                    Text(exercise.muscleGroup)
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
+                                    HStack {
+                                        Text(exercise.exerciseType.rawValue)
+                                            .font(.caption)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(backgroundForType(exercise.exerciseType))
+                                            .foregroundColor(.white)
+                                            .cornerRadius(8)
+                                        
+                                        Text(exercise.allMajorMuscleNames)
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
                                 }
                                 
                                 Spacer()
@@ -79,50 +134,37 @@ struct SelectExercisesView: View {
                     .disabled(selectedExercises.isEmpty)
                 }
             }
-        }
-    }
-    
-    private func targetMusclesView(muscles: [MajorMuscle]) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack {
-                ForEach(muscles) { muscle in
-                    Text(muscle.name)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(Color.blue)
-                        .foregroundColor(.white)
-                        .cornerRadius(20)
-                        .onTapGesture {
-                            selectExercisesForMuscle(muscle)
-                        }
-                }
+            .onAppear {
+                loadExistingExercises()
             }
-            .padding(.horizontal)
-            .padding(.top, 8)
         }
     }
     
     private var filteredExercises: [Exercise] {
         var filtered = allExercises
         
-        // Filter by target muscles if any are selected
-        if let targetMuscles = plan.targetMuscles, !targetMuscles.isEmpty {
+        // Filter by selected muscle if any
+        if let selectedMuscle = selectedMuscleFilter {
             filtered = filtered.filter { exercise in
                 if let majorMuscles = exercise.majorMuscles {
                     return majorMuscles.contains { muscle in
-                        targetMuscles.contains { $0.id == muscle.id }
+                        muscle.id == selectedMuscle.id
                     }
                 }
-                return targetMuscles.contains { $0.name == exercise.muscleGroup }
+                return exercise.muscleGroup == selectedMuscle.name
             }
         }
         
         // Apply search filter
         if !searchText.isEmpty {
-            filtered = filtered.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
+            filtered = filtered.filter { 
+                $0.name.localizedCaseInsensitiveContains(searchText) ||
+                $0.allMajorMuscleNames.localizedCaseInsensitiveContains(searchText)
+            }
         }
         
-        return filtered
+        // Sort by name
+        return filtered.sorted(by: { $0.name < $1.name })
     }
     
     private func toggleExerciseSelection(_ exercise: Exercise) {
@@ -133,10 +175,11 @@ struct SelectExercisesView: View {
         }
     }
     
-    private func selectExercisesForMuscle(_ muscle: MajorMuscle) {
-        if let muscleExercises = muscle.exercises {
-            for exercise in muscleExercises {
-                selectedExercises.insert(exercise)
+    private func loadExistingExercises() {
+        // Pre-select exercises that are already in the workout plan
+        if let existingExercises = plan.exercises {
+            for plannedExercise in existingExercises {
+                selectedExercises.insert(plannedExercise.exercise)
             }
         }
     }
@@ -155,14 +198,35 @@ struct SelectExercisesView: View {
         for (index, exercise) in selectedExercises.enumerated() {
             let plannedExercise = PlannedExercise(
                 exercise: exercise,
-                order: index,
-                targetSets: 3,
-                targetReps: 10
+                order: index
             )
             
-            // Set suggested weight based on last workout
-            if let lastWorkout = exercise.workoutHistory?.sorted(by: { $0.date > $1.date }).first {
-                plannedExercise.targetWeight = lastWorkout.weight * 1.05
+            // Set default targets based on exercise type
+            switch exercise.exerciseType {
+            case .weight:
+                plannedExercise.targetSets = 3
+                plannedExercise.targetReps = 10
+                // Set suggested weight based on last workout
+                if let lastWorkout = exercise.workoutHistory?.sorted(by: { $0.date > $1.date }).first {
+                    plannedExercise.targetWeight = lastWorkout.weight * 1.05
+                }
+                
+            case .cardio:
+                plannedExercise.targetSets = 1
+                if exercise.cardioMetric == .time || exercise.cardioMetric == .both {
+                    plannedExercise.targetDuration = 1800 // Default 30 minutes
+                }
+                if exercise.cardioMetric == .distance || exercise.cardioMetric == .both {
+                    plannedExercise.targetDistance = 5.0 // Default 5km
+                }
+                
+            case .bodyweight:
+                plannedExercise.targetSets = 3
+                plannedExercise.targetReps = 15
+                
+            case .flexibility:
+                plannedExercise.targetSets = 1
+                plannedExercise.targetDuration = 300 // Default 5 minutes
             }
             
             plannedExercises.append(plannedExercise)
@@ -175,6 +239,24 @@ struct SelectExercisesView: View {
         try? modelContext.save()
         SwiftDataManager.shared.saveContext()
         
-        dismiss()
+        // Call the completion handler if provided
+        if let onSave = onSave {
+            onSave()
+        } else {
+            dismiss()
+        }
+    }
+    
+    private func backgroundForType(_ type: ExerciseType) -> Color {
+        switch type {
+        case .weight:
+            return .blue
+        case .cardio:
+            return .orange
+        case .bodyweight:
+            return .green
+        case .flexibility:
+            return .purple
+        }
     }
 }

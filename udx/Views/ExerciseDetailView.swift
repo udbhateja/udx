@@ -16,6 +16,9 @@ struct ExerciseDetailView: View {
     @State private var editedVideoURL: String
     @State private var selectedMajorMuscles: Set<MajorMuscle> = []
     @State private var selectedMinorMuscles: Set<MinorMuscle> = []
+    @State private var editedExerciseType: ExerciseType
+    @State private var editedCardioMetric: CardioMetric
+    @State private var editedSupportsWeight: Bool
     
     // For image editing
     @State private var selectedItem: PhotosPickerItem?
@@ -32,6 +35,9 @@ struct ExerciseDetailView: View {
         self._editedDetails = State(initialValue: exercise.details)
         self._editedVideoURL = State(initialValue: exercise.videoURL?.absoluteString ?? "")
         self._editedImageData = State(initialValue: exercise.imageData)
+        self._editedExerciseType = State(initialValue: exercise.exerciseType)
+        self._editedCardioMetric = State(initialValue: exercise.cardioMetric)
+        self._editedSupportsWeight = State(initialValue: exercise.supportsWeight)
         
         var majorSet = Set<MajorMuscle>()
         if let majors = exercise.majorMuscles {
@@ -176,6 +182,22 @@ struct ExerciseDetailView: View {
     private var displayView: some View {
         VStack(alignment: .leading, spacing: 16) {
             Group {
+                Text("Exercise Type")
+                    .font(.headline)
+                HStack {
+                    Text(exercise.exerciseType.rawValue)
+                    if exercise.exerciseType == .cardio {
+                        Text("• \(exercise.cardioMetric.rawValue)")
+                            .foregroundColor(.secondary)
+                    } else if exercise.exerciseType == .bodyweight && exercise.supportsWeight {
+                        Text("• Can add weight")
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .padding(.leading)
+            }
+            
+            Group {
                 Text("Muscle Groups")
                     .font(.headline)
                 Text(exercise.allMajorMuscleNames)
@@ -215,6 +237,29 @@ struct ExerciseDetailView: View {
         VStack(alignment: .leading, spacing: 16) {
             TextField("Exercise Name", text: $editedName)
                 .textFieldStyle(RoundedBorderTextFieldStyle())
+            
+            Text("Exercise Type")
+                .font(.headline)
+            
+            Picker("Exercise Type", selection: $editedExerciseType) {
+                ForEach(ExerciseType.allCases, id: \.self) { type in
+                    Text(type.rawValue).tag(type)
+                }
+            }
+            .pickerStyle(.segmented)
+            
+            if editedExerciseType == .cardio {
+                Picker("Metric Type", selection: $editedCardioMetric) {
+                    ForEach(CardioMetric.allCases, id: \.self) { metric in
+                        Text(metric.rawValue).tag(metric)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
+            
+            if editedExerciseType == .bodyweight {
+                Toggle("Can Add Weight", isOn: $editedSupportsWeight)
+            }
             
             Text("Major Muscle Groups")
                 .font(.headline)
@@ -292,7 +337,7 @@ struct ExerciseDetailView: View {
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                         
-                        Text("\(log.sets) sets × \(log.reps) reps at \(String(format: "%.1f", log.weight)) kg")
+                        Text(formatHistoryLog(log))
                             .font(.body)
                         
                         if let notes = log.notes, !notes.isEmpty {
@@ -329,6 +374,9 @@ struct ExerciseDetailView: View {
         editedDetails = exercise.details
         editedVideoURL = exercise.videoURL?.absoluteString ?? ""
         editedImageData = exercise.imageData
+        editedExerciseType = exercise.exerciseType
+        editedCardioMetric = exercise.cardioMetric
+        editedSupportsWeight = exercise.supportsWeight
         
         var majorSet = Set<MajorMuscle>()
         if let majors = exercise.majorMuscles {
@@ -358,6 +406,9 @@ struct ExerciseDetailView: View {
         exercise.name = editedName
         exercise.details = editedDetails
         exercise.imageData = editedImageData
+        exercise.exerciseType = editedExerciseType
+        exercise.cardioMetric = editedCardioMetric
+        exercise.supportsWeight = editedSupportsWeight
         
         // Update video URL
         if !editedVideoURL.isEmpty {
@@ -407,5 +458,39 @@ struct ExerciseDetailView: View {
         // Explicitly save changes
         try? modelContext.save()
         SwiftDataManager.shared.saveContext()
+    }
+    
+    private func formatHistoryLog(_ log: ExerciseLog) -> String {
+        switch exercise.exerciseType {
+        case .weight:
+            return "\(log.sets) sets × \(log.reps) reps at \(String(format: "%.1f", log.weight)) kg"
+        case .cardio:
+            var parts: [String] = []
+            if log.sets > 1 {
+                parts.append("\(log.sets) sets")
+            }
+            if let duration = log.duration {
+                let minutes = Int(duration) / 60
+                let seconds = Int(duration) % 60
+                parts.append(String(format: "%d:%02d", minutes, seconds))
+            }
+            if let distance = log.distance {
+                parts.append("\(String(format: "%.2f", distance)) \(log.distanceUnit)")
+            }
+            return parts.joined(separator: " • ")
+        case .bodyweight:
+            if log.weight > 0 {
+                return "\(log.sets) sets × \(log.reps) reps (+\(String(format: "%.1f", log.weight)) kg)"
+            } else {
+                return "\(log.sets) sets × \(log.reps) reps"
+            }
+        case .flexibility:
+            if let duration = log.duration {
+                let minutes = Int(duration) / 60
+                let seconds = Int(duration) % 60
+                return String(format: "%d:%02d", minutes, seconds)
+            }
+            return "Completed"
+        }
     }
 }

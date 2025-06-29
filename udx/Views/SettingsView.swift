@@ -1,9 +1,16 @@
 import SwiftUI
 import SwiftData
+import UniformTypeIdentifiers
+
+// Define custom UTType for our backup files
+extension UTType {
+    static let udxBackup = UTType(filenameExtension: "udxbackup") ?? UTType.data
+}
 
 struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var majorMuscles: [MajorMuscle]
+    @StateObject private var exportImportService = ExportImportService.shared
     
     @State private var showAddMajorMuscle = false
     @State private var showAddMinorMuscle = false
@@ -11,9 +18,68 @@ struct SettingsView: View {
     @State private var newMinorMuscleName = ""
     @State private var selectedMajorMuscle: MajorMuscle?
     
+    // Export/Import states
+    @State private var showExportSheet = false
+    @State private var showImportPicker = false
+    @State private var showAlert = false
+    @State private var alertMessage = ""
+    @State private var alertTitle = ""
+    @State private var exportedFileURL: URL?
+    @State private var showImportConfirmation = false
+    @State private var importURL: URL?
+    @State private var showRestartRequired = false
+    
     var body: some View {
         NavigationStack {
             List {
+                // Data Management Section
+                Section("Data Management") {
+                    // Export
+                    Button(action: { Task { await exportData() } }) {
+                        HStack {
+                            Label("Export Data", systemImage: "square.and.arrow.up")
+                            Spacer()
+                            if exportImportService.isExporting {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                            }
+                        }
+                    }
+                    .disabled(exportImportService.isExporting)
+                    
+                    // Import
+                    Button(action: { showImportPicker = true }) {
+                        HStack {
+                            Label("Import Data", systemImage: "square.and.arrow.down")
+                            Spacer()
+                            if exportImportService.isImporting {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                            }
+                        }
+                    }
+                    .disabled(exportImportService.isImporting)
+                    
+                    // Auto Export Status
+                    VStack(alignment: .leading, spacing: 4) {
+                        Toggle("Daily Auto-Export", isOn: .constant(true))
+                            .disabled(true)
+                        
+                        if let lastExport = exportImportService.lastExportDate {
+                            Text("Last export: \(lastExport.formatted())")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        if let lastImport = exportImportService.lastImportDate {
+                            Text("Last import: \(lastImport.formatted())")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+                
+                // Muscle Management Section
                 Section("Muscles") {
                     NavigationLink {
                         manageMusclesView
@@ -22,10 +88,111 @@ struct SettingsView: View {
                     }
                 }
                 
-                // Add other settings sections here as needed
+                // API Keys Section (placeholder for future Gemini integration)
+                Section("API Keys") {
+                    NavigationLink {
+                        apiKeysView
+                    } label: {
+                        Text("Gemini API Key")
+                    }
+                }
             }
             .navigationTitle("Settings")
+            .fileImporter(
+                isPresented: $showImportPicker,
+                allowedContentTypes: [.udxBackup],
+                allowsMultipleSelection: false
+            ) { result in
+                switch result {
+                case .success(let urls):
+                    if let url = urls.first {
+                        importURL = url
+                        showImportConfirmation = true
+                    }
+                case .failure(let error):
+                    alertTitle = "Import Error"
+                    alertMessage = error.localizedDescription
+                    showAlert = true
+                }
+            }
+            .alert("Import Data", isPresented: $showImportConfirmation) {
+                Button("Cancel", role: .cancel) { }
+                Button("Import", role: .destructive) {
+                    if let url = importURL {
+                        Task { await importData(from: url) }
+                    }
+                }
+            } message: {
+                Text("This will replace all existing data. Are you sure you want to continue?")
+            }
+            .alert(alertTitle, isPresented: $showAlert) {
+                Button("OK") { }
+            } message: {
+                Text(alertMessage)
+            }
+            .alert("Restart Required", isPresented: $showRestartRequired) {
+                Button("OK") { exit(0) }
+            } message: {
+                Text("The app needs to restart to load the imported data. The app will now close.")
+            }
+            .sheet(isPresented: $showExportSheet) {
+                if let url = exportedFileURL {
+                    ShareSheet(url: url)
+                }
+            }
         }
+        .task {
+            // Check for automatic export on view appear
+            await exportImportService.performAutomaticExportIfNeeded()
+        }
+    }
+    
+    // MARK: - Export/Import Methods
+    
+    private func exportData() async {
+        do {
+            let url = try await exportImportService.exportData()
+            exportedFileURL = url
+            showExportSheet = true
+        } catch {
+            alertTitle = "Export Failed"
+            alertMessage = error.localizedDescription
+            showAlert = true
+        }
+    }
+    
+    private func importData(from url: URL) async {
+        do {
+            guard let container = try? modelContext.container else {
+                throw ImportError.storeNotFound
+            }
+            
+            try await exportImportService.importData(from: url, modelContainer: container)
+            alertTitle = "Import Successful"
+            alertMessage = "Data imported successfully. The app needs to restart to load the new data."
+            showAlert = true
+            showRestartRequired = true
+        } catch {
+            alertTitle = "Import Failed"
+            alertMessage = error.localizedDescription
+            showAlert = true
+        }
+    }
+    
+    // MARK: - Sub Views
+    
+    private var apiKeysView: some View {
+        Form {
+            Section {
+                SecureField("Gemini API Key", text: .constant(""))
+                    .disabled(true)
+                Text("Gemini integration coming soon")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .navigationTitle("API Keys")
+        .navigationBarTitleDisplayMode(.inline)
     }
     
     private var manageMusclesView: some View {
@@ -169,6 +336,18 @@ struct SettingsView: View {
             }
         }
     }
+}
+
+// MARK: - Share Sheet
+
+struct ShareSheet: UIViewControllerRepresentable {
+    let url: URL
+    
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: [url], applicationActivities: nil)
+    }
+    
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
 // Add to the DeleteHelper actor

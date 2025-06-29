@@ -25,8 +25,22 @@ final class WorkoutPlan {
     }
     
     var muscleGroupNames: String {
-        guard let muscles = targetMuscles, !muscles.isEmpty else { return "No target muscles" }
-        return muscles.map { $0.name }.joined(separator: ", ")
+        // Derive muscle groups from exercises instead of target muscles
+        guard let exercises = exercises, !exercises.isEmpty else { return "No exercises" }
+        
+        var muscleGroups = Set<String>()
+        for plannedExercise in exercises {
+            if let majorMuscles = plannedExercise.exercise.majorMuscles {
+                for muscle in majorMuscles {
+                    muscleGroups.insert(muscle.name)
+                }
+            } else {
+                // Fallback to legacy string property
+                muscleGroups.insert(plannedExercise.exercise.muscleGroup)
+            }
+        }
+        
+        return muscleGroups.isEmpty ? "No target muscles" : muscleGroups.sorted().joined(separator: ", ")
     }
     
     var exerciseCount: Int {
@@ -48,17 +62,38 @@ final class PlannedExercise {
     var targetReps: Int
     var targetWeight: Double?
     
+    // Additional targets for different exercise types
+    var targetDuration: TimeInterval? // For cardio/flexibility exercises (in seconds)
+    var targetDistance: Double? // For cardio exercises
+    var distanceUnit: String = "km" // km or miles
+    
     // Workout logs for this planned exercise
     @Relationship var logs: [WorkoutSet]?
     
     // Relationship to parent workout
     @Relationship(inverse: \WorkoutPlan.exercises) var workoutPlan: WorkoutPlan?
     
-    init(exercise: Exercise, order: Int = 0, targetSets: Int = 3, targetReps: Int = 10) {
+    init(exercise: Exercise, order: Int = 0, targetSets: Int = 3, targetReps: Int = 10, targetDuration: TimeInterval? = nil, targetDistance: Double? = nil) {
         self.exercise = exercise
         self.order = order
         self.targetSets = targetSets
         self.targetReps = targetReps
+        self.targetDuration = targetDuration
+        self.targetDistance = targetDistance
+        
+        // Set default targets based on exercise type
+        switch exercise.exerciseType {
+        case .cardio:
+            if targetDuration == nil {
+                self.targetDuration = 1800 // Default 30 minutes
+            }
+        case .flexibility:
+            if targetDuration == nil {
+                self.targetDuration = 300 // Default 5 minutes
+            }
+        default:
+            break
+        }
     }
     
     // Last workout data for this exercise
@@ -79,16 +114,23 @@ final class PlannedExercise {
     
     // Helper for progressive overload
     var suggestedWeight: Double {
-        guard let lastLog = lastWorkout else {
-            return 0 // Return 0 if no previous workout data
-        }
-        
-        // Simple progressive overload: 5% increase if completed all reps last time
-        if lastLog.reps >= targetReps {
-            return lastLog.weight * 1.05
-        } else {
-            return lastLog.weight
-        }
+        let recommendation = ProgressiveOverloadCalculator.calculateProgressiveOverload(
+            for: exercise,
+            currentLog: lastWorkout,
+            targetSets: targetSets,
+            targetReps: targetReps
+        )
+        return recommendation.suggestedWeight
+    }
+    
+    // Get full progressive overload recommendation
+    var progressiveOverloadRecommendation: ProgressiveOverloadCalculator.OverloadRecommendation {
+        return ProgressiveOverloadCalculator.calculateProgressiveOverload(
+            for: exercise,
+            currentLog: lastWorkout,
+            targetSets: targetSets,
+            targetReps: targetReps
+        )
     }
 }
 
@@ -101,14 +143,34 @@ final class WorkoutSet {
     var notes: String?
     var isWarmup: Bool = false
     
+    // Additional metrics for different exercise types
+    var duration: TimeInterval? // For cardio/flexibility exercises (in seconds)
+    var distance: Double? // For cardio exercises (in km/miles)
+    var distanceUnit: String = "km" // km or miles
+    
     // Relationship to planned exercise
     @Relationship(inverse: \PlannedExercise.logs) var plannedExercise: PlannedExercise?
     
-    init(setNumber: Int, reps: Int, weight: Double, isWarmup: Bool = false, notes: String? = nil) {
+    init(setNumber: Int, reps: Int = 0, weight: Double = 0, duration: TimeInterval? = nil, distance: Double? = nil, isWarmup: Bool = false, notes: String? = nil) {
         self.setNumber = setNumber
         self.reps = reps
         self.weight = weight
+        self.duration = duration
+        self.distance = distance
         self.isWarmup = isWarmup
         self.notes = notes
+    }
+    
+    // Helper computed properties
+    var formattedDuration: String {
+        guard let duration = duration else { return "" }
+        let minutes = Int(duration) / 60
+        let seconds = Int(duration) % 60
+        return String(format: "%d:%02d", minutes, seconds)
+    }
+    
+    var formattedDistance: String {
+        guard let distance = distance else { return "" }
+        return String(format: "%.2f %@", distance, distanceUnit)
     }
 }

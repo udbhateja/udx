@@ -11,6 +11,7 @@ import SwiftData
 @main
 struct udxApp: App {
     let dataManager = SwiftDataManager.shared
+    @StateObject private var exportImportService = ExportImportService.shared
     
     var body: some Scene {
         WindowGroup {
@@ -20,7 +21,13 @@ struct udxApp: App {
                     .onAppear {
                         // Add default data if needed
                         dataManager.addDefaultMusclesIfNeeded()
+                        
+                        // Perform automatic export
+                        Task {
+                            await exportImportService.performAutomaticExportIfNeeded()
+                        }
                     }
+                    .environmentObject(exportImportService)
             } else {
                 Text("Failed to initialize database")
                     .foregroundColor(.red)

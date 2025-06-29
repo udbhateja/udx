@@ -82,20 +82,34 @@ struct ExercisesView: View {
     private var exerciseList: some View {
         List {
             ForEach(groupedExercises.keys.sorted(), id: \.self) { group in
-                Section(header: Text(group)) {
-                    ForEach(groupedExercises[group]!, id: \.id) { exercise in
-                        NavigationLink(destination: ExerciseDetailView(exercise: exercise)) {
-                            VStack(alignment: .leading) {
-                                Text(exercise.name)
-                                    .font(.headline)
-                                Text(exercise.allMinorMuscleNames)
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
+                if let exercises = groupedExercises[group] {
+                    Section(header: Text(group)) {
+                        ForEach(exercises, id: \.id) { exercise in
+                            NavigationLink(destination: ExerciseDetailView(exercise: exercise)) {
+                                VStack(alignment: .leading) {
+                                    HStack {
+                                        Text(exercise.name)
+                                            .font(.headline)
+                                        Spacer()
+                                        Text(exercise.exerciseType.rawValue)
+                                            .font(.caption)
+                                            .padding(.horizontal, 8)
+                                            .padding(.vertical, 2)
+                                            .background(backgroundForType(exercise.exerciseType))
+                                            .foregroundColor(.white)
+                                            .cornerRadius(10)
+                                    }
+                                    if !exercise.allMinorMuscleNames.isEmpty {
+                                        Text(exercise.allMinorMuscleNames)
+                                            .font(.subheadline)
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
                             }
                         }
-                    }
-                    .onDelete { indexSet in
-                        deleteExercises(for: group, at: indexSet)
+                        .onDelete { indexSet in
+                            deleteExercises(exercises, at: indexSet)
+                        }
                     }
                 }
             }
@@ -103,10 +117,69 @@ struct ExercisesView: View {
         .searchable(text: $searchText, prompt: "Search exercises")
     }
     
-    private func deleteExercises(for group: String, at offsets: IndexSet) {
-        let exercisesToDelete = offsets.map { groupedExercises[group]![$0] }
-        for exercise in exercisesToDelete {
+    private func deleteExercises(_ exercises: [Exercise], at offsets: IndexSet) {
+        for index in offsets {
+            let exercise = exercises[index]
+            
+            // Delete related ExerciseLog entries
+            if let workoutHistory = exercise.workoutHistory {
+                for log in workoutHistory {
+                    modelContext.delete(log)
+                }
+            }
+            
+            // Find and delete any PlannedExercise entries that use this exercise
+            let descriptor = FetchDescriptor<PlannedExercise>()
+            if let plannedExercises = try? modelContext.fetch(descriptor) {
+                for plannedExercise in plannedExercises {
+                    if plannedExercise.exercise.id == exercise.id {
+                        // Delete associated WorkoutSet entries first
+                        if let logs = plannedExercise.logs {
+                            for log in logs {
+                                modelContext.delete(log)
+                            }
+                        }
+                        modelContext.delete(plannedExercise)
+                    }
+                }
+            }
+            
+            // Remove exercise from muscle relationships
+            if let majorMuscles = exercise.majorMuscles {
+                for muscle in majorMuscles {
+                    muscle.exercises?.removeAll { $0.id == exercise.id }
+                }
+            }
+            
+            if let minorMuscles = exercise.minorMuscles {
+                for muscle in minorMuscles {
+                    muscle.exercises?.removeAll { $0.id == exercise.id }
+                }
+            }
+            
+            // Finally delete the exercise
             modelContext.delete(exercise)
+        }
+        
+        // Save immediately after deletion
+        do {
+            try modelContext.save()
+            SwiftDataManager.shared.saveContext()
+        } catch {
+            print("Error deleting exercise: \(error)")
+        }
+    }
+    
+    private func backgroundForType(_ type: ExerciseType) -> Color {
+        switch type {
+        case .weight:
+            return .blue
+        case .cardio:
+            return .orange
+        case .bodyweight:
+            return .green
+        case .flexibility:
+            return .purple
         }
     }
 }
