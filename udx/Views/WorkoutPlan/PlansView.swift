@@ -5,8 +5,10 @@ struct PlansView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \WorkoutPlan.date, order: .reverse) private var workoutPlans: [WorkoutPlan]
     @State private var showingAddPlan = false
+    @State private var showingClonePlan = false
     @State private var viewMode: ViewMode = .list
     @State private var selectedDate: Date = Date()
+    @State private var showTemplates = false
     
     enum ViewMode {
         case list, calendar
@@ -36,32 +38,62 @@ struct PlansView: View {
             }
             .navigationTitle("Workout Plans")
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    if viewMode == .list {
+                        Button(showTemplates ? "Show Plans" : "Show Templates") {
+                            showTemplates.toggle()
+                        }
+                    }
+                }
+                
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        showingAddPlan = true
+                    Menu {
+                        Button {
+                            showingAddPlan = true
+                        } label: {
+                            Label("Create New", systemImage: "plus.circle")
+                        }
+                        
+                        Button {
+                            showingClonePlan = true
+                        } label: {
+                            Label("Clone Workout", systemImage: "doc.on.doc")
+                        }
                     } label: {
-                        Label("Add Plan", systemImage: "plus")
+                        Label("Add", systemImage: "plus")
                     }
                 }
             }
             .sheet(isPresented: $showingAddPlan) {
                 CreatePlanView()
             }
+            .sheet(isPresented: $showingClonePlan) {
+                CloneWorkoutView()
+            }
         }
     }
     
     // List view (existing functionality)
     private var workoutListView: some View {
-        List {
-            if workoutPlans.isEmpty {
+        let filteredPlans = workoutPlans.filter { showTemplates ? $0.isTemplate : !$0.isTemplate }
+        
+        return List {
+            if filteredPlans.isEmpty {
                 ContentUnavailableView(
-                    "No Workout Plans",
-                    systemImage: "dumbbell",
-                    description: Text("Tap the + button to create a new workout plan")
+                    showTemplates ? "No Templates" : "No Workout Plans",
+                    systemImage: showTemplates ? "doc.text" : "dumbbell",
+                    description: Text(showTemplates ? "Save a workout as template to reuse it" : "Tap the + button to create a new workout plan")
                 )
+            } else if showTemplates {
+                // Show templates
+                Section("Workout Templates") {
+                    ForEach(filteredPlans) { plan in
+                        planRow(for: plan)
+                    }
+                }
             } else {
                 // Today's workouts
-                let todayPlans = workoutPlans.filter { Calendar.current.isDateInToday($0.date) }
+                let todayPlans = filteredPlans.filter { Calendar.current.isDateInToday($0.date) }
                 if !todayPlans.isEmpty {
                     Section(todayPlans.count == 1 ? "Today's Workout" : "Today's Workouts") {
                         ForEach(todayPlans) { plan in
@@ -71,7 +103,7 @@ struct PlansView: View {
                 }
                 
                 // Upcoming workouts
-                let upcomingPlans = workoutPlans.filter {
+                let upcomingPlans = filteredPlans.filter {
                     $0.date > Date() && !Calendar.current.isDateInToday($0.date)
                 }
                 
@@ -84,7 +116,7 @@ struct PlansView: View {
                 }
                 
                 // Past workouts
-                let pastPlans = workoutPlans.filter {
+                let pastPlans = filteredPlans.filter {
                     $0.date < Date() && !Calendar.current.isDateInToday($0.date)
                 }
                 
@@ -297,8 +329,17 @@ struct PlansView: View {
     private func planRow(for plan: WorkoutPlan) -> some View {
         NavigationLink(destination: WorkoutDetailView(plan: plan)) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(plan.name)
-                    .font(.headline)
+                HStack {
+                    Text(plan.name)
+                        .font(.headline)
+                    
+                    if plan.isTemplate {
+                        Label("Template", systemImage: "doc.text")
+                            .font(.caption)
+                            .foregroundColor(.blue)
+                            .labelStyle(.iconOnly)
+                    }
+                }
                 
                 HStack {
                     Text(plan.formattedDate)
@@ -323,6 +364,34 @@ struct PlansView: View {
                 }
             }
         }
+        .contextMenu {
+            Button {
+                toggleTemplate(plan)
+            } label: {
+                Label(
+                    plan.isTemplate ? "Remove from Templates" : "Save as Template",
+                    systemImage: plan.isTemplate ? "doc.text.badge.minus" : "doc.text.badge.plus"
+                )
+            }
+            
+            Button(role: .destructive) {
+                deletePlan(plan)
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+        }
+    }
+    
+    private func toggleTemplate(_ plan: WorkoutPlan) {
+        plan.isTemplate.toggle()
+        try? modelContext.save()
+        SwiftDataManager.shared.saveContext()
+    }
+    
+    private func deletePlan(_ plan: WorkoutPlan) {
+        modelContext.delete(plan)
+        try? modelContext.save()
+        SwiftDataManager.shared.saveContext()
     }
 }
 

@@ -20,6 +20,10 @@ struct LogExerciseView: View {
     @State private var minutes = 0
     @State private var seconds = 0
     
+    // For editing sets
+    @State private var showingEditSheet = false
+    @State private var setToEdit: WorkoutSet?
+    
     var exerciseType: ExerciseType {
         plannedExercise.exercise.exerciseType
     }
@@ -65,23 +69,41 @@ struct LogExerciseView: View {
                     }
                     
                     if let logs = plannedExercise.logs, !logs.isEmpty {
-                        Section("Completed Sets") {
+                        Section {
+                            Text("Swipe left on any set to edit or delete")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .italic()
+                                .padding(.vertical, 2)
+                            
                             ForEach(logs.sorted(by: { $0.setNumber < $1.setNumber })) { set in
-                                HStack {
-                                    Text("Set \(set.setNumber)")
-                                        .fontWeight(.semibold)
-                                    
-                                    Spacer()
-                                    
-                                    Text(formatSetDisplay(set))
-                                    
-                                    if set.isWarmup {
-                                        Text("(Warm-up)")
-                                            .foregroundColor(.secondary)
-                                            .font(.caption)
+                                LoggedSetRowView(
+                                    workoutSet: set,
+                                    plannedExercise: plannedExercise,
+                                    onUpdate: {
+                                        // Update current set number after deletion
+                                        if let logs = plannedExercise.logs {
+                                            currentSet = logs.count + 1
+                                        }
                                     }
+                                )
+                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                    Button(role: .destructive) {
+                                        deleteSet(set)
+                                    } label: {
+                                        Label("Delete", systemImage: "trash")
+                                    }
+                                    
+                                    Button {
+                                        editSet(set)
+                                    } label: {
+                                        Label("Edit", systemImage: "pencil")
+                                    }
+                                    .tint(.blue)
                                 }
                             }
+                        } header: {
+                            Text("Completed Sets")
                         }
                     }
                 }
@@ -104,6 +126,91 @@ struct LogExerciseView: View {
             }
             .onAppear {
                 setupInitialValues()
+            }
+            .sheet(item: $setToEdit) { set in
+                EditSetView(
+                    workoutSet: set,
+                    plannedExercise: plannedExercise,
+                    onSave: {
+                        // Update current set number if needed
+                        if let logs = plannedExercise.logs {
+                            currentSet = logs.count + 1
+                        }
+                    }
+                )
+            }
+        }
+    }
+    
+    private func editSet(_ set: WorkoutSet) {
+        setToEdit = set
+    }
+    
+    private func deleteSet(_ set: WorkoutSet) {
+        // Remove from planned exercise
+        plannedExercise.logs?.removeAll { $0.id == set.id }
+        
+        // Renumber remaining sets
+        if let logs = plannedExercise.logs?.sorted(by: { $0.setNumber < $1.setNumber }) {
+            for (index, remainingSet) in logs.enumerated() {
+                remainingSet.setNumber = index + 1
+            }
+        }
+        
+        // Delete from context
+        modelContext.delete(set)
+        
+        // Update exercise history
+        updateExerciseHistoryAfterDeletion()
+        
+        // Update current set number
+        if let logs = plannedExercise.logs {
+            currentSet = logs.count + 1
+        }
+        
+        // Save changes
+        try? modelContext.save()
+        SwiftDataManager.shared.saveContext()
+    }
+    
+    private func updateExerciseHistoryAfterDeletion() {
+        // Update the aggregated exercise log for today
+        let today = Calendar.current.startOfDay(for: Date())
+        
+        // Find log for today
+        let existingLog = plannedExercise.exercise.workoutHistory?.first { log in
+            Calendar.current.isDate(log.date, inSameDayAs: today)
+        }
+        
+        if let log = existingLog, let logs = plannedExercise.logs {
+            // Count only non-warmup sets
+            let workingSets = logs.filter { !$0.isWarmup }
+            
+            if workingSets.isEmpty {
+                // If no working sets remain, delete the log
+                plannedExercise.exercise.workoutHistory?.removeAll { $0.id == log.id }
+                modelContext.delete(log)
+            } else {
+                // Update with new totals
+                log.sets = workingSets.count
+                
+                // Average values based on exercise type
+                switch exerciseType {
+                case .weight, .bodyweight:
+                    log.reps = Int(workingSets.map { $0.reps }.reduce(0, +) / workingSets.count)
+                    log.weight = workingSets.map { $0.weight }.reduce(0, +) / Double(workingSets.count)
+                case .cardio:
+                    if let totalDuration = workingSets.compactMap({ $0.duration }).reduce(0, +) as TimeInterval? {
+                        log.duration = totalDuration
+                    }
+                    if let totalDistance = workingSets.compactMap({ $0.distance }).reduce(0, +) as Double? {
+                        log.distance = totalDistance
+                    }
+                case .flexibility:
+                    if let totalDuration = workingSets.compactMap({ $0.duration }).reduce(0, +) as TimeInterval? {
+                        log.duration = totalDuration
+                    }
+                }
             }
         }
     }

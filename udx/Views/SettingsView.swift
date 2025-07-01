@@ -28,10 +28,74 @@ struct SettingsView: View {
     @State private var showImportConfirmation = false
     @State private var importURL: URL?
     @State private var showRestartRequired = false
+    @State private var selectedBackupFrequency = UserDefaults.standard.backupFrequency
+    @State private var showBackupsList = false
     
     var body: some View {
         NavigationStack {
             List {
+                // Backup Settings Section
+                Section("Backup Settings") {
+                    // Backup Frequency Picker
+                    Picker("Backup Frequency", selection: $selectedBackupFrequency) {
+                        ForEach(BackupFrequency.allCases, id: \.self) { frequency in
+                            Label {
+                                VStack(alignment: .leading) {
+                                    Text(frequency.displayName)
+                                    Text(frequency.description)
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                            } icon: {
+                                Image(systemName: frequency.systemImageName)
+                            }
+                            .tag(frequency)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .onChange(of: selectedBackupFrequency) { _, newValue in
+                        UserDefaults.standard.backupFrequency = newValue
+                        if newValue != .manual {
+                            Task { await exportImportService.performAutomaticExportIfNeeded() }
+                        }
+                    }
+                    
+                    // Backup Status
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Backup Status")
+                                .font(.subheadline)
+                            if let lastBackup = UserDefaults.standard.lastBackupDate {
+                                Text("Last backup: \(lastBackup.formatted())")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            } else {
+                                Text("No backups yet")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        Spacer()
+                        if selectedBackupFrequency == .manual {
+                            Button("Backup Now") {
+                                Task { await performManualBackup() }
+                            }
+                            .font(.caption)
+                            .buttonStyle(.bordered)
+                        }
+                    }
+                    
+                    // View Backups
+                    Button(action: { showBackupsList = true }) {
+                        HStack {
+                            Label("View Backups", systemImage: "clock.arrow.circlepath")
+                            Spacer()
+                            Text("\(exportImportService.getBackupsList().count)")
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+                
                 // Data Management Section
                 Section("Data Management") {
                     // Export
@@ -59,24 +123,6 @@ struct SettingsView: View {
                         }
                     }
                     .disabled(exportImportService.isImporting)
-                    
-                    // Auto Export Status
-                    VStack(alignment: .leading, spacing: 4) {
-                        Toggle("Daily Auto-Export", isOn: .constant(true))
-                            .disabled(true)
-                        
-                        if let lastExport = exportImportService.lastExportDate {
-                            Text("Last export: \(lastExport.formatted())")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        if let lastImport = exportImportService.lastImportDate {
-                            Text("Last import: \(lastImport.formatted())")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                    }
                 }
                 
                 // Muscle Management Section
@@ -140,10 +186,28 @@ struct SettingsView: View {
                     ShareSheet(url: url)
                 }
             }
+            .sheet(isPresented: $showBackupsList) {
+                BackupsListView()
+            }
         }
         .task {
             // Check for automatic export on view appear
             await exportImportService.performAutomaticExportIfNeeded()
+        }
+    }
+    
+    // MARK: - Manual Backup
+    
+    private func performManualBackup() async {
+        do {
+            let url = try await exportImportService.performManualBackup()
+            alertTitle = "Backup Successful"
+            alertMessage = "Your data has been backed up successfully."
+            showAlert = true
+        } catch {
+            alertTitle = "Backup Failed"
+            alertMessage = error.localizedDescription
+            showAlert = true
         }
     }
     

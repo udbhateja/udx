@@ -75,7 +75,12 @@ struct WorkoutDetailView: View {
                         prepareForEditing()
                         showingEditWorkoutSheet = true
                     }
-
+                    
+                    Button(plan.isTemplate ? "Remove from Templates" : "Save as Template") {
+                        plan.isTemplate.toggle()
+                        try? modelContext.save()
+                        SwiftDataManager.shared.saveContext()
+                    }
                     
                     Button("Delete Workout", role: .destructive) {
                         showingDeleteConfirmation = true
@@ -125,6 +130,12 @@ struct WorkoutDetailView: View {
                     Label("Completed", systemImage: "checkmark.circle.fill")
                         .font(.subheadline)
                         .foregroundColor(.green)
+                }
+                
+                if plan.isTemplate {
+                    Label("Template", systemImage: "doc.text")
+                        .font(.subheadline)
+                        .foregroundColor(.blue)
                 }
             }
             

@@ -10,6 +10,10 @@ class SwiftDataManager {
     var container: ModelContainer?
     var context: ModelContext?
     
+    var modelContext: ModelContext? {
+        return context
+    }
+    
     private init() {}
     
     func createContainer() -> ModelContainer? {

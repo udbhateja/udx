@@ -10,7 +10,7 @@ final class ExportImportService: ObservableObject {
     @Published var isImporting = false
     @Published var lastExportDate: Date? {
         didSet {
-            UserDefaults.standard.set(lastExportDate, forKey: "LastExportDate")
+            UserDefaults.standard.lastBackupDate = lastExportDate
         }
     }
     @Published var lastImportDate: Date? {
@@ -22,7 +22,8 @@ final class ExportImportService: ObservableObject {
     private let fileManager = FileManager.default
     
     private init() {
-        lastExportDate = UserDefaults.standard.object(forKey: "LastExportDate") as? Date
+        // Use the same key for both lastExportDate and lastBackupDate for consistency
+        lastExportDate = UserDefaults.standard.lastBackupDate
         lastImportDate = UserDefaults.standard.object(forKey: "LastImportDate") as? Date
     }
     
@@ -162,12 +163,16 @@ final class ExportImportService: ObservableObject {
     // MARK: - Automatic Export
     
     func performAutomaticExportIfNeeded() async {
+        let frequency = UserDefaults.standard.backupFrequency
+        
+        // Skip if manual backup is selected
+        guard frequency != .manual else { return }
+        
         let calendar = Calendar.current
         let now = Date()
         
-        // Check if we've exported today
-        if let lastExport = lastExportDate,
-           calendar.isDateInToday(lastExport) {
+        // Check if backup is needed based on frequency
+        guard shouldPerformBackup(frequency: frequency, lastBackup: lastExportDate, now: now) else {
             return
         }
         
@@ -182,16 +187,112 @@ final class ExportImportService: ObservableObject {
             // Create backups folder if needed
             try? fileManager.createDirectory(at: backupsFolder, withIntermediateDirectories: true)
             
-            // Clean up old backups (keep last 7 days)
-            try await cleanupOldBackups(in: backupsFolder, keepDays: 7)
+            // Clean up old backups based on frequency
+            let keepDays = getRetentionDays(for: frequency)
+            try await cleanupOldBackups(in: backupsFolder, keepDays: keepDays)
             
             // Move new backup
             let backupURL = backupsFolder.appendingPathComponent(exportURL.lastPathComponent)
             try? fileManager.moveItem(at: exportURL, to: backupURL)
             
+            // Update last backup date in UserDefaults
+            UserDefaults.standard.lastBackupDate = Date()
+            
         } catch {
             print("Automatic export failed: \(error)")
         }
+    }
+    
+    private func shouldPerformBackup(frequency: BackupFrequency, lastBackup: Date?, now: Date) -> Bool {
+        guard let lastBackup = lastBackup else { return true }
+        
+        let calendar = Calendar.current
+        
+        switch frequency {
+        case .daily:
+            return !calendar.isDateInToday(lastBackup)
+        case .weekly:
+            let weekAgo = calendar.date(byAdding: .weekOfYear, value: -1, to: now) ?? now
+            return lastBackup < weekAgo
+        case .monthly:
+            let monthAgo = calendar.date(byAdding: .month, value: -1, to: now) ?? now
+            return lastBackup < monthAgo
+        case .manual:
+            return false
+        }
+    }
+    
+    private func getRetentionDays(for frequency: BackupFrequency) -> Int {
+        switch frequency {
+        case .daily:
+            return 7  // Keep 1 week of daily backups
+        case .weekly:
+            return 28 // Keep 4 weeks of weekly backups
+        case .monthly:
+            return 365 // Keep 1 year of monthly backups
+        case .manual:
+            return 30  // Keep manual backups for 30 days
+        }
+    }
+    
+    // MARK: - Backup Management
+    
+    func getBackupsList() -> [BackupInfo] {
+        let documentsPath = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let backupsFolder = documentsPath.appendingPathComponent("UDX_Backups")
+        
+        guard let files = try? fileManager.contentsOfDirectory(at: backupsFolder, includingPropertiesForKeys: [.creationDateKey, .fileSizeKey]) else {
+            return []
+        }
+        
+        return files
+            .filter { $0.pathExtension == "udxbackup" }
+            .compactMap { url in
+                guard let resourceValues = try? url.resourceValues(forKeys: [.creationDateKey, .fileSizeKey]),
+                      let creationDate = resourceValues.creationDate,
+                      let fileSize = resourceValues.fileSize else {
+                    return nil
+                }
+                
+                return BackupInfo(
+                    url: url,
+                    date: creationDate,
+                    size: Int64(fileSize),
+                    fileName: url.lastPathComponent
+                )
+            }
+            .sorted { $0.date > $1.date }
+    }
+    
+    func deleteBackup(_ backup: BackupInfo) throws {
+        try fileManager.removeItem(at: backup.url)
+    }
+    
+    func performManualBackup() async throws -> URL {
+        let exportURL = try await exportData()
+        
+        // For manual backups, save to a user-accessible location
+        let documentsPath = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let backupsFolder = documentsPath.appendingPathComponent("UDX_Backups")
+        
+        // Create backups folder if needed
+        try? fileManager.createDirectory(at: backupsFolder, withIntermediateDirectories: true)
+        
+        // Create filename with "manual" prefix
+        let fileName = "manual_udx_backup_\(DateFormatter.backupDateFormatter.string(from: Date())).udxbackup"
+        let backupURL = backupsFolder.appendingPathComponent(fileName)
+        
+        // Move to final location
+        if fileManager.fileExists(atPath: backupURL.path) {
+            try fileManager.removeItem(at: backupURL)
+        }
+        try fileManager.moveItem(at: exportURL, to: backupURL)
+        
+        // Update last backup date
+        UserDefaults.standard.lastBackupDate = Date()
+        lastExportDate = Date()
+        
+        return backupURL
     }
     
     // MARK: - Helper Methods
@@ -324,6 +425,31 @@ struct ExportMetadata: Codable {
     let version: String
     let exportDate: Date
     let appVersion: String
+}
+
+struct BackupInfo: Identifiable {
+    let id = UUID()
+    let url: URL
+    let date: Date
+    let size: Int64
+    let fileName: String
+    
+    var formattedSize: String {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: size)
+    }
+    
+    var isManual: Bool {
+        fileName.hasPrefix("manual_")
+    }
+    
+    var formattedDate: String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
+    }
 }
 
 enum ExportError: LocalizedError {

@@ -7,6 +7,7 @@ final class WorkoutPlan {
     var name: String
     var notes: String?
     var isCompleted: Bool = false
+    var isTemplate: Bool = false
     
     @Relationship var targetMuscles: [MajorMuscle]?
     @Relationship var exercises: [PlannedExercise]?
